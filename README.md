@@ -38,3 +38,4 @@ conditions and variables.
 ## Issues
 
 - [ ] Recursive procedures are not working.
+- [ ] Can not intepret lists.
