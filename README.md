@@ -34,8 +34,4 @@ conditions and variables.
 - \<,  lt: Less-than comparison, e.g., (< a b)
 - \>\=, gte: Greater-than-or-equal comparison, e.g., (>= a b)
 - \<\=, lte: Less-than-or-equal comparison, e.g., (<= a b)
-
-## Issues
-
-- [ ] Recursive procedures are not working.
-- [ ] Can not intepret lists.
+- exit: End the program.

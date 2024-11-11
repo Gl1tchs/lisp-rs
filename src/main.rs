@@ -1,8 +1,11 @@
 use std::collections::{HashMap, VecDeque};
 use std::f32::consts::{E, PI};
-use std::io::{self, Write};
+use std::process::exit;
 use std::rc::Rc;
 use std::{error::Error, fmt};
+
+use rustyline::error::ReadlineError;
+use rustyline::DefaultEditor;
 
 #[derive(Debug, Clone, PartialEq)]
 enum Expr {
@@ -16,27 +19,26 @@ impl ToString for Expr {
         match &self {
             Expr::Sym(sym) => sym.to_string(),
             Expr::Num(num) => format!("{}", num),
-            Expr::List(list) => list.iter().map(|expr| format!("{:?}", expr)).collect(),
+            Expr::List(list) => list
+                .iter()
+                .map(|expr| format!("{} ", expr.to_string()))
+                .collect(),
         }
     }
 }
 
-type Proc = dyn Fn(Vec<Value>) -> Result<Value, String>;
+type Proc = dyn Fn(Vec<Value>, &Env) -> Result<Value, String>;
 
 #[derive(Clone)]
 enum Value {
-    Sym(String),
     Num(f32),
-    List(Vec<Expr>),
     Func(Rc<Proc>),
 }
 
 impl ToString for Value {
     fn to_string(&self) -> String {
         match &self {
-            Value::Sym(sym) => sym.to_string(),
             Value::Num(num) => format!("{}", num),
-            Value::List(list) => list.iter().map(|expr| format!("{:?}", expr)).collect(),
             Value::Func(proc) => format!("{:p}", proc),
         }
     }
@@ -45,9 +47,7 @@ impl ToString for Value {
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Value::Sym(a), Value::Sym(b)) => a == b,
             (Value::Num(a), Value::Num(b)) => a == b,
-            (Value::List(a), Value::List(b)) => a == b,
             _ => false,
         }
     }
@@ -192,9 +192,7 @@ fn eval(x: Expr, env: &mut Env) -> Option<Value> {
                         None
                     }?;
 
-                    let env = env.clone();
-
-                    let proc: Rc<Proc> = Rc::new(move |args: Vec<Value>| {
+                    let proc: Rc<Proc> = Rc::new(move |args: Vec<Value>, env: &Env| {
                         if args.len() != params.len() {
                             return Err(
                                 "Length of parameters are not suitable with the given ones."
@@ -239,7 +237,7 @@ fn eval(x: Expr, env: &mut Env) -> Option<Value> {
                         .collect();
 
                     match proc {
-                        Value::Func(proc) => Some(proc(vals).unwrap()),
+                        Value::Func(proc) => Some(proc(vals, env).unwrap()),
                         _ => None,
                     }
                 }
@@ -248,32 +246,38 @@ fn eval(x: Expr, env: &mut Env) -> Option<Value> {
     }
 }
 
-fn repl() {
-    let stdin = io::stdin();
-    let mut input = String::new();
+fn main() -> rustyline::Result<()> {
+    let mut reader = DefaultEditor::new()?;
+    if let Err(_) = reader.load_history("rispy_history.txt") {
+        println!("No previous history.");
+    }
+
     let mut env = Env::default();
 
     loop {
-        print!("repl> ");
+        let readline = reader.readline("repl> ");
 
-        io::stdout().flush().unwrap();
+        match readline {
+            Ok(line) => {
+                if line.is_empty() {
+                    continue;
+                }
 
-        input.clear();
-        let _ = stdin.read_line(&mut input);
-
-        match parse(&input) {
-            Ok(ast) => {
-                if let Some(result) = eval(ast, &mut env) {
-                    println!("{}", result.to_string());
+                match parse(&line) {
+                    Ok(ast) => {
+                        if let Some(result) = eval(ast, &mut env) {
+                            println!("{}", result.to_string());
+                        }
+                    }
+                    Err(err) => println!("{}", err),
                 }
             }
-            Err(err) => println!("{}", err),
+            Err(ReadlineError::Interrupted) => println!("KeyboardInterrupt"),
+            _ => break,
         }
     }
-}
 
-fn main() {
-    repl();
+    Ok(())
 }
 
 impl Default for Env {
@@ -285,7 +289,7 @@ impl Default for Env {
 
         env.insert_func(
             "begin",
-            Rc::new(|args| {
+            Rc::new(|args, _| {
                 if args.is_empty() {
                     return Err("begin requires at least one argument.".into());
                 }
@@ -297,7 +301,7 @@ impl Default for Env {
 
         env.insert_func(
             "car",
-            Rc::new(|args| {
+            Rc::new(|args, _| {
                 if args.is_empty() {
                     return Err("car expects at least one argument".into());
                 }
@@ -308,7 +312,7 @@ impl Default for Env {
 
         env.insert_func(
             "+",
-            Rc::new(|args| {
+            Rc::new(|args, _| {
                 let sum = args.iter().try_fold(0.0, |acc, expr| match expr {
                     Value::Num(n) => Ok::<f32, String>(acc + *n as f32),
                     _ => Err("Addition requires numeric arguments.".into()),
@@ -318,7 +322,7 @@ impl Default for Env {
         );
         env.insert_func(
             "-",
-            Rc::new(|args| {
+            Rc::new(|args, _| {
                 if args.len() != 2 {
                     return Err("Subtraction function expects two arguments.".into());
                 }
@@ -335,7 +339,7 @@ impl Default for Env {
         );
         env.insert_func(
             "*",
-            Rc::new(|args| {
+            Rc::new(|args, _| {
                 let product = args.iter().try_fold(1.0, |acc, expr| match expr {
                     Value::Num(n) => Ok::<f32, String>(acc * n),
                     _ => Err("Multiplication requires numeric arguments.".into()),
@@ -345,7 +349,7 @@ impl Default for Env {
         );
         env.insert_func(
             "/",
-            Rc::new(|args| {
+            Rc::new(|args, _| {
                 if args.len() != 2 {
                     return Err("Division function expects two arguments.".into());
                 }
@@ -365,7 +369,7 @@ impl Default for Env {
         );
         env.insert_func(
             "mod",
-            Rc::new(|args| {
+            Rc::new(|args, _| {
                 if args.len() != 2 {
                     return Err("mod expects two arguments.".into());
                 }
@@ -382,7 +386,7 @@ impl Default for Env {
         );
         env.insert_func(
             "expt",
-            Rc::new(|args| {
+            Rc::new(|args, _| {
                 if args.len() != 2 {
                     return Err("expt expects two arguments.".into());
                 }
@@ -399,7 +403,7 @@ impl Default for Env {
         );
         env.insert_func(
             "sqrt",
-            Rc::new(|args| {
+            Rc::new(|args, _| {
                 if args.len() != 1 {
                     return Err("sqrt expects one argument.".into());
                 }
@@ -412,7 +416,7 @@ impl Default for Env {
         );
         env.insert_func(
             "abs",
-            Rc::new(|args| {
+            Rc::new(|args, _| {
                 if args.len() != 1 {
                     return Err("abs expects one argument.".into());
                 }
@@ -426,7 +430,7 @@ impl Default for Env {
 
         env.insert_func(
             "sin",
-            Rc::new(|args| {
+            Rc::new(|args, _| {
                 if args.len() != 1 {
                     return Err("sin function expects one argument.".into());
                 }
@@ -440,7 +444,7 @@ impl Default for Env {
 
         env.insert_func(
             "cos",
-            Rc::new(|args| {
+            Rc::new(|args, _| {
                 if args.len() != 1 {
                     return Err("cos function expects one argument.".into());
                 }
@@ -457,7 +461,7 @@ impl Default for Env {
 
         env.insert_func(
             ">",
-            Rc::new(|args| {
+            Rc::new(|args, _| {
                 if args.len() != 2 {
                     return Err("gt expects two arguments.".into());
                 }
@@ -474,7 +478,7 @@ impl Default for Env {
         );
         env.insert_func(
             "<",
-            Rc::new(|args| {
+            Rc::new(|args, _| {
                 if args.len() != 2 {
                     return Err("lt expects two arguments.".into());
                 }
@@ -491,7 +495,7 @@ impl Default for Env {
         );
         env.insert_func(
             ">=",
-            Rc::new(|args| {
+            Rc::new(|args, _| {
                 if args.len() != 2 {
                     return Err("gte expects two arguments.".into());
                 }
@@ -508,7 +512,7 @@ impl Default for Env {
         );
         env.insert_func(
             "<=",
-            Rc::new(|args| {
+            Rc::new(|args, _| {
                 if args.len() != 2 {
                     return Err("lte expects two arguments.".into());
                 }
@@ -521,6 +525,13 @@ impl Default for Env {
                     _ => return Err("lte expects numeric arguments.".into()),
                 };
                 Ok(Value::Num(if a <= b { 1.0 } else { 0.0 }))
+            }),
+        );
+
+        env.insert_func(
+            "exit",
+            Rc::new(|_, _| {
+                exit(0);
             }),
         );
 
